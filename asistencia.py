@@ -6,6 +6,27 @@ import pyodbc
 from datetime import datetime, timezone, timedelta
 
 st.set_page_config(page_title="Pase de Lista - CBTis 139", layout="wide")
+
+# ------------------------------------------------------------------
+# 0. PANTALLA DE CIERRE DEFINITIVO (Bloquea cualquier interacción posterior)
+# ------------------------------------------------------------------
+if st.session_state.get("cerrado_definitivo", False):
+    st.title("🔒 Control de Asistencia Escolar (CBTis 139)")
+    st.success("### ✅ Sesión y Aplicación Cerradas Correctamente")
+    st.info("La información fue guardada en el servidor de forma segura. Puedes cerrar esta pestaña de tu navegador.")
+    
+    # Intento automático por script para cerrar la pestaña si el navegador lo permite
+    st.components.v1.html("""
+        <script>
+            window.close();
+            setTimeout(function() {
+                window.location.href = "about:blank";
+            }, 500);
+        </script>
+    """, height=0)
+    
+    st.stop()  # Detiene la aplicación por completo
+
 st.title("📋 Control de Asistencia Escolar (CBTis 139)")
 
 # ------------------------------------------------------------------
@@ -53,7 +74,13 @@ def obtener_conexion():
     engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
     return engine
 
-# Lista de estados y mapa de estilos para los botones
+# Función para cerrar y bloquear definitivamente la sesión
+def cerrar_y_salir():
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state["cerrado_definitivo"] = True
+
+# Lista de estados y mapa de estilos
 ESTADOS_ORDEN = ["Asistencia", "Falta", "Retardo", "Justificado"]
 
 ESTILOS_ESTADO = {
@@ -64,7 +91,7 @@ ESTILOS_ESTADO = {
 }
 
 def alternar_estado(id_alumno):
-    """Avanza al siguiente estado en el ciclo: Asistencia -> Falta -> Retardo -> Justificado -> Asistencia"""
+    """Avanza al siguiente estado en el ciclo"""
     clave_estado = f"estado_alumno_{id_alumno}"
     estado_actual = st.session_state.get(clave_estado, "Asistencia")
     idx_actual = ESTADOS_ORDEN.index(estado_actual)
@@ -81,6 +108,10 @@ try:
         st.session_state["autenticado"] = False
         st.session_state["usuario_actual"] = ""
         st.session_state["id_maestro"] = None
+
+    if "registro_exitoso" not in st.session_state:
+        st.session_state["registro_exitoso"] = False
+        st.session_state["resumen_registro"] = {}
 
     if not st.session_state["autenticado"]:
         st.subheader("🔐 Acceso para Docentes")
@@ -109,6 +140,7 @@ try:
                                 st.session_state["autenticado"] = True
                                 st.session_state["usuario_actual"] = resultado.usuario
                                 st.session_state["id_maestro"] = resultado.id_maestro
+                                st.session_state["registro_exitoso"] = False
                                 st.success(f"¡Bienvenido(a), {resultado.usuario}!")
                                 st.rerun()
                             else:
@@ -123,10 +155,38 @@ try:
         st.write("👤 **Docente activo:**")
         st.info(f"**{st.session_state['usuario_actual']}** (ID: {st.session_state['id_maestro']})")
         if st.button("🔒 Cerrar Sesión", use_container_width=True):
-            st.session_state["autenticado"] = False
-            st.session_state["usuario_actual"] = ""
-            st.session_state["id_maestro"] = None
+            cerrar_y_salir()
             st.rerun()
+
+    # ------------------------------------------------------------------
+    # VISTA DE CONFIRMACIÓN FINAL Y SALIDA DEFINITIVA
+    # ------------------------------------------------------------------
+    if st.session_state["registro_exitoso"]:
+        resumen = st.session_state["resumen_registro"]
+        
+        st.success("### ✅ Pase de Lista Finalizado Correctamente")
+        st.markdown(f"""
+        ---
+        ### 📑 Comprobante de Registro Institucional
+
+        * 📂 **Grupo registrado:** `{resumen['grupo']}`
+        * 📅 **Fecha y Hora de Captura:** `{resumen['fecha_pantalla']}` a las `{resumen['hora_str']}` hrs
+        * 👤 **Docente Responsable:** {resumen['docente']} (ID: {resumen['id_docente']})
+        * ⏰ **Módulo Validado:** `{resumen['modulo']}`
+        * 📊 **Total de Alumnos Procesados:** `{resumen['total_alumnos']}`
+
+        ---
+        *La información ha sido guardada de forma definitiva en el servidor de base de datos del CBTis 139.*
+        """)
+
+        st.divider()
+
+        # Botón único que cierra la aplicación por completo
+        if st.button("🚪 Salir del Sistema", type="primary", use_container_width=True):
+            cerrar_y_salir()
+            st.rerun()
+
+        st.stop()
 
     # ------------------------------------------------------------------
     # Asegurar estructura de tablas
@@ -204,7 +264,7 @@ try:
         # Guardar Pase de Lista con Validación Estricta de Horario
         # ------------------------------------------------------------------
         if st.button("💾 Guardar Pase de Lista", type="primary", use_container_width=True):
-            fecha_str, hora_str, _, hora_objeto = obtener_fecha_hora_mexico()
+            fecha_str, hora_str, fecha_pantalla, hora_objeto = obtener_fecha_hora_mexico()
             id_docente = st.session_state.get("id_maestro")
 
             # 🛑 VALIDACIÓN 1: Horario límite diario (2:30 PM = 14:30:00)
@@ -265,7 +325,7 @@ try:
                 st.warning(f"🚫 **Atención:** Ya has registrado la asistencia para el grupo **{grupo_seleccionado}** en el módulo actual ({h_ini_str[:5]} - {h_fin_str[:5]}). No es posible duplicar el registro.")
                 st.stop()
 
-            # 💾 GUARDA EL ESTADO ACUMULADO EN SESSION_STATE PARA CADA ALUMNO
+            # 💾 GUARDA EL ESTADO ACUMULADO PARA CADA ALUMNO
             registros_guardados = 0
             with engine.begin() as conn:
                 for idx, row in df_alumnos.iterrows():
@@ -289,8 +349,20 @@ try:
                     })
                     registros_guardados += 1
 
-            st.balloons()
-            st.success(f"¡Pase de lista del grupo **{grupo_seleccionado}** guardado exitosamente a las **{hora_str}** ({registros_guardados} registros)! Se guardaron correctamente las faltas y asistencias seleccionadas.")
+            # ------------------------------------------------------------------
+            # CAMBIO A VISTA LIMPIA DE CONFIRMACIÓN
+            # ------------------------------------------------------------------
+            st.session_state["resumen_registro"] = {
+                "grupo": grupo_seleccionado,
+                "fecha_pantalla": fecha_pantalla,
+                "hora_str": hora_str,
+                "docente": st.session_state['usuario_actual'],
+                "id_docente": id_docente,
+                "modulo": f"{h_ini_str[:5]} - {h_fin_str[:5]}",
+                "total_alumnos": registros_guardados
+            }
+            st.session_state["registro_exitoso"] = True
+            st.rerun()
 
     else:
         st.warning(f"No se encontraron alumnos registrados para el grupo **{grupo_seleccionado}**.")
