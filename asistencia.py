@@ -17,7 +17,7 @@ def obtener_fecha_hora_mexico():
     return ahora.strftime("%Y-%m-%d"), ahora.strftime("%H:%M:%S"), ahora.strftime("%d/%m/%Y"), ahora.time()
 
 # ------------------------------------------------------------------
-# 1. Configuración de Conexión a Base de Datos
+# Configuración de Conexión a Base de Datos
 # ------------------------------------------------------------------
 drivers_instalados = pyodbc.drivers()
 driver_elegido = "SQL Server"
@@ -53,11 +53,29 @@ def obtener_conexion():
     engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}")
     return engine
 
+# Lista de estados y mapa de estilos para los botones
+ESTADOS_ORDEN = ["Asistencia", "Falta", "Retardo", "Justificado"]
+
+ESTILOS_ESTADO = {
+    "Asistencia": {"label": "✅ Asistencia", "type": "secondary"},
+    "Falta": {"label": "❌ Falta", "type": "primary"},
+    "Retardo": {"label": "⏳ Retardo", "type": "secondary"},
+    "Justificado": {"label": "📋 Justificado", "type": "secondary"}
+}
+
+def alternar_estado(id_alumno):
+    """Avanza al siguiente estado en el ciclo: Asistencia -> Falta -> Retardo -> Justificado -> Asistencia"""
+    clave_estado = f"estado_alumno_{id_alumno}"
+    estado_actual = st.session_state.get(clave_estado, "Asistencia")
+    idx_actual = ESTADOS_ORDEN.index(estado_actual)
+    siguiente_idx = (idx_actual + 1) % len(ESTADOS_ORDEN)
+    st.session_state[clave_estado] = ESTADOS_ORDEN[siguiente_idx]
+
 try:
     engine = obtener_conexion()
 
     # ------------------------------------------------------------------
-    # 2. CONTROL DE ACCESO
+    # CONTROL DE ACCESO
     # ------------------------------------------------------------------
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
@@ -111,7 +129,7 @@ try:
             st.rerun()
 
     # ------------------------------------------------------------------
-    # 3. Asegurar estructura de tablas
+    # Asegurar estructura de tablas
     # ------------------------------------------------------------------
     with engine.begin() as conn:
         conn.execute(text("""
@@ -130,7 +148,7 @@ try:
         """))
 
     # ------------------------------------------------------------------
-    # 4. Selección de Grupo y Hora Actual
+    # Selección de Grupo
     # ------------------------------------------------------------------
     df_grupos = pd.read_sql("SELECT DISTINCT grupo FROM alumno WHERE grupo IS NOT NULL ORDER BY grupo", engine)
     lista_grupos = df_grupos["grupo"].tolist() if not df_grupos.empty else ["1A", "1B", "2A"]
@@ -143,67 +161,53 @@ try:
         st.info(f"📅 **Fecha:** {fecha_pantalla} | ⏰ **Hora actual:** {hora_str}")
 
     # ------------------------------------------------------------------
-    # 5. Cargar alumnos del grupo
+    # Cargar Alumnos
     # ------------------------------------------------------------------
     query_alumnos = f"SELECT idalumno, nombre, grupo FROM alumno WHERE grupo = '{grupo_seleccionado}' ORDER BY nombre"
     df_alumnos = pd.read_sql(query_alumnos, engine)
 
     if not df_alumnos.empty:
         st.subheader(f"Lista de Asistencia - Grupo {grupo_seleccionado}")
-        st.caption("💡 Selecciona el estado de cada estudiante antes de guardar.")
-
-        c_head_nom, c_head_btn = st.columns([3, 1.5])
-        with c_head_nom:
-            st.markdown("**Nombre del Alumno**")
-        with c_head_btn:
-            st.markdown("**Estado (Toca para cambiar)**")
+        st.caption("👆 **Toca el botón de cualquier alumno** para alternar: Asistencia ➔ Falta ➔ Retardo ➔ Justificado.")
 
         st.divider()
 
-        ciclo_estados = ["Asistencia", "Falta", "Retardo", "Justificado"]
-
         for idx, row in df_alumnos.iterrows():
-            id_al = row["idalumno"]
-            clave_estado = f"estado_al_{grupo_seleccionado}_{id_al}"
+            id_al = int(row["idalumno"])
+            nombre_al = row["nombre"]
+            clave_estado = f"estado_alumno_{id_al}"
+
             if clave_estado not in st.session_state:
                 st.session_state[clave_estado] = "Asistencia"
 
-        for idx, row in df_alumnos.iterrows():
-            id_al = row["idalumno"]
-            nombre_al = row["nombre"]
-            clave_estado = f"estado_al_{grupo_seleccionado}_{id_al}"
             estado_actual = st.session_state[clave_estado]
+            info_btn = ESTILOS_ESTADO[estado_actual]
 
-            c_nom, c_btn = st.columns([3, 1.5])
+            c_nom, c_btn = st.columns([3, 2])
 
             with c_nom:
                 st.write(f"**{nombre_al}**")
 
             with c_btn:
-                if estado_actual == "Asistencia":
-                    label = "✅ Asistencia"
-                elif estado_actual == "Falta":
-                    label = "❌ Falta"
-                elif estado_actual == "Retardo":
-                    label = "⏰ Retardo"
-                else:
-                    label = "📝 Justificado"
-
-                if st.button(label, key=f"btn_{clave_estado}", use_container_width=True):
-                    idx_siguiente = (ciclo_estados.index(estado_actual) + 1) % len(ciclo_estados)
-                    st.session_state[clave_estado] = ciclo_estados[idx_siguiente]
-                    st.rerun()
+                st.button(
+                    label=info_btn["label"],
+                    type=info_btn["type"],
+                    key=f"btn_al_{id_al}",
+                    use_container_width=True,
+                    on_click=alternar_estado,
+                    args=(id_al,)
+                )
 
         st.divider()
 
         # ------------------------------------------------------------------
-        # 6. Guardar Pase de Lista con Validación de Rango y Duplicados
+        # Guardar Pase de Lista con Validación Estricta de Horario
         # ------------------------------------------------------------------
         if st.button("💾 Guardar Pase de Lista", type="primary", use_container_width=True):
             fecha_str, hora_str, _, hora_objeto = obtener_fecha_hora_mexico()
             id_docente = st.session_state.get("id_maestro")
 
-            # 🛑 VALIDACIÓN 1: Horario límite diario (Antes de las 2:30 PM = 14:30:00)
+            # 🛑 VALIDACIÓN 1: Horario límite diario (2:30 PM = 14:30:00)
             hora_limite = datetime.strptime("14:30:00", "%H:%M:%S").time()
             if hora_objeto > hora_limite:
                 st.error("⚠️ **Registro no permitido:** El horario límite para pasar lista (2:30 PM) ha concluido.")
@@ -215,11 +219,13 @@ try:
 
             bloque_actual = None
 
-            # Identificar en qué rango/bloque cae la hora actual
             for _, h_row in df_horarios.iterrows():
                 try:
-                    h_inicio = datetime.strptime(str(h_row["inicio"]).strip(), "%H:%M:%S").time() if len(str(h_row["inicio"]).strip()) == 8 else datetime.strptime(str(h_row["inicio"]).strip(), "%H:%M").time()
-                    h_fin = datetime.strptime(str(h_row["fin"]).strip(), "%H:%M:%S").time() if len(str(h_row["fin"]).strip()) == 8 else datetime.strptime(str(h_row["fin"]).strip(), "%H:%M").time()
+                    str_ini = str(h_row["inicio"]).strip()
+                    str_fin = str(h_row["fin"]).strip()
+
+                    h_inicio = datetime.strptime(str_ini, "%H:%M:%S").time() if len(str_ini) == 8 else datetime.strptime(str_ini, "%H:%M").time()
+                    h_fin = datetime.strptime(str_fin, "%H:%M:%S").time() if len(str_fin) == 8 else datetime.strptime(str_fin, "%H:%M").time()
                     
                     if h_inicio <= hora_objeto <= h_fin:
                         bloque_actual = (h_inicio, h_fin)
@@ -227,41 +233,46 @@ try:
                 except Exception:
                     continue
 
-            # 🛑 VALIDACIÓN 2: Verificar si ya existe registro en este periodo
-            if bloque_actual:
-                h_ini_str = bloque_actual[0].strftime("%H:%M:%S")
-                h_fin_str = bloque_actual[1].strftime("%H:%M:%S")
+            # 🛑 VALIDACIÓN 2: Si no coincide con NINGÚN módulo de clase (ej. Receso de 10:00 a 10:30)
+            if not bloque_actual:
+                st.error(f"🚫 **Horario no permitido:** La hora actual (**{hora_str[:5]}**) no pertenece a ningún módulo de clase registrado en 'horamateria' (tiempo de receso o fuera de horario).")
+                st.stop()
 
-                query_existente = text("""
-                    SELECT COUNT(*) as total 
-                    FROM asistencia 
-                    WHERE id_maestro = :id_m 
-                      AND grupo = :grp 
-                      AND fecha = :fec 
-                      AND hora >= :h_ini 
-                      AND hora <= :h_fin
-                """)
+            # 🛑 VALIDACIÓN 3: Evitar duplicados si ya se pasó lista en este módulo
+            h_ini_str = bloque_actual[0].strftime("%H:%M:%S")
+            h_fin_str = bloque_actual[1].strftime("%H:%M:%S")
 
-                with engine.connect() as conn:
-                    conteo = conn.execute(query_existente, {
-                        "id_m": id_docente,
-                        "grp": grupo_seleccionado,
-                        "fec": fecha_str,
-                        "h_ini": h_ini_str,
-                        "h_fin": h_fin_str
-                    }).fetchone().total
+            query_existente = text("""
+                SELECT COUNT(*) as total 
+                FROM asistencia 
+                WHERE id_maestro = :id_m 
+                  AND grupo = :grp 
+                  AND fecha = :fec 
+                  AND hora >= :h_ini 
+                  AND hora <= :h_fin
+            """)
 
-                if conteo > 0:
-                    st.warning(f"🚫 **Atención:** Ya has registrado la asistencia para el grupo **{grupo_seleccionado}** en el módulo actual ({h_ini_str[:5]} - {h_fin_str[:5]}). No es posible duplicar el registro.")
-                    st.stop()
+            with engine.connect() as conn:
+                conteo = conn.execute(query_existente, {
+                    "id_m": id_docente,
+                    "grp": grupo_seleccionado,
+                    "fec": fecha_str,
+                    "h_ini": h_ini_str,
+                    "h_fin": h_fin_str
+                }).fetchone().total
 
-            # 💾 SI PASA LAS VALIDACIONES, SE PROCEDE A GUARDAR
+            if conteo > 0:
+                st.warning(f"🚫 **Atención:** Ya has registrado la asistencia para el grupo **{grupo_seleccionado}** en el módulo actual ({h_ini_str[:5]} - {h_fin_str[:5]}). No es posible duplicar el registro.")
+                st.stop()
+
+            # 💾 GUARDA EL ESTADO ACUMULADO EN SESSION_STATE PARA CADA ALUMNO
             registros_guardados = 0
             with engine.begin() as conn:
                 for idx, row in df_alumnos.iterrows():
                     id_al = int(row['idalumno'])
                     grp = str(row['grupo'])
-                    clave_estado = f"estado_al_{grupo_seleccionado}_{id_al}"
+                    
+                    clave_estado = f"estado_alumno_{id_al}"
                     estado_final = st.session_state.get(clave_estado, "Asistencia")
 
                     query_insert = text("""
@@ -279,7 +290,7 @@ try:
                     registros_guardados += 1
 
             st.balloons()
-            st.success(f"¡Pase de lista del grupo **{grupo_seleccionado}** guardado exitosamente a las **{hora_str}** ({registros_guardados} registros)!")
+            st.success(f"¡Pase de lista del grupo **{grupo_seleccionado}** guardado exitosamente a las **{hora_str}** ({registros_guardados} registros)! Se guardaron correctamente las faltas y asistencias seleccionadas.")
 
     else:
         st.warning(f"No se encontraron alumnos registrados para el grupo **{grupo_seleccionado}**.")
