@@ -6,20 +6,19 @@ import pyodbc
 from sqlalchemy import create_engine, text
 import streamlit as st
 
-# 1. Configuración de página con Sidebar forzado a estar expandido
+# 1. Configuración de página
 st.set_page_config(
     page_title="Control de Asistencia - CBTis 139",
     layout="wide",
-    initial_sidebar_state="expanded",  # Forzar despliegue del menú lateral
+    initial_sidebar_state="expanded",
 )
 
 # ------------------------------------------------------------------
-# Estilos CSS Limpios (Sin bloquear el header del sidebar)
+# Estilos CSS Limpios con Semaforización de Faltas Previas
 # ------------------------------------------------------------------
 st.markdown(
     """
     <style>
-    /* Ocultar pie de página por defecto pero conservar el header funcional */
     footer {visibility: hidden;}
     
     .card-alumno {
@@ -32,10 +31,26 @@ st.markdown(
         align-items: center;
         justify-content: space-between;
     }
+    
+    /* Estados de la clase actual */
     .est-asistencia { background-color: #DCFCE7; border: 1px solid #86EFAC; color: #14532D; }
     .est-falta { background-color: #FEE2E2; border: 1px solid #FCA5A5; color: #7F1D1D; }
     .est-retardo { background-color: #FFEDD5; border: 1px solid #FDBA74; color: #7C2D12; }
     .est-justificado { background-color: #E0F2FE; border: 1px solid #7DD3FC; color: #0C4A6E; }
+
+    /* Banderas de Semáforo para el Nombre (Histórico de Faltas) */
+    .badge-semaforo {
+        padding: 4px 10px;
+        border-radius: 6px;
+        color: #FFFFFF;
+        font-weight: bold;
+        font-size: 0.85rem;
+        margin-left: 8px;
+        display: inline-block;
+    }
+    .sem-coral { background-color: #F87171; }    /* 1 falta previa */
+    .sem-naranja { background-color: #FB923C; }  /* 2 faltas previas */
+    .sem-rojo { background-color: #EF4444; }     /* 3+ faltas previas */
     </style>
 """,
     unsafe_allow_html=True,
@@ -219,14 +234,13 @@ if not st.session_state["autenticado"]:
   st.stop()
 
 # ------------------------------------------------------------------
-# 2. BARRA LATERAL (SIEMPRE ACTIVA TRAS LOGUEARSE)
+# 2. BARRA LATERAL (MENÚ PRINCIPAL)
 # ------------------------------------------------------------------
 fecha_sql, fecha_pantalla, hora_sql, dia_semana, nombre_dia = (
     obtener_tiempo_mexico()
 )
 id_docente = str(st.session_state["idmaestro"]).strip()
 
-# Renderizado explícito de la barra lateral
 st.sidebar.title("📌 Menú Principal")
 st.sidebar.write("👤 **Docente activo:**")
 st.sidebar.info(f"**{st.session_state['usuario_actual']}** (ID: {id_docente})")
@@ -260,19 +274,60 @@ if modo_vista == "📝 Pase de Lista Activo":
 
   if st.session_state["registro_exitoso"]:
     resumen = st.session_state["resumen_registro"]
-    st.success("### ✅ Pase de Lista Finalizado y Guardado")
-    st.markdown(f"""
-        ---
-        ### 📑 Comprobante de Registro
-        * 📂 **Grupo:** `{resumen['grupo']}`
-        * 📚 **Materia:** `{resumen['materia']}`
-        * 📅 **Fecha:** `{resumen['fecha_pantalla']}`
-        * ⏰ **Hora de firma:** `{resumen['hora_sql'][:5]} hrs`
-        * 👤 **Clave Docente:** `{resumen['clave_docente']}`
-        * ⚡ **Incidencias registradas:** `{resumen['total_incidencias']}`
-        """)
+
+    st.success(
+        f"✅ **Pase de Lista Guardado exitosamente** ({resumen['hora_sql'][:5]}"
+        " hrs)"
+    )
+    st.markdown(
+        f"🏫 **Grupo:** `{resumen['grupo']}` | 📚 **Materia:**"
+        f" `{resumen['materia']}` | ⚡ **Incidencias:**"
+        f" `{resumen['total_incidencias']}`"
+    )
+    st.caption(
+        "🔒 Los estados han sido guardados en la base de datos. La lista"
+        " permanecerá visible en modo lectura durante tu clase."
+    )
     st.divider()
-    if st.button("🚪 Salir del Sistema", type="primary", use_container_width=True):
+
+    for al in resumen["alumnos_guardados"]:
+      cfg = CONFIG_ESTADOS.get(al["estado"], CONFIG_ESTADOS[1])
+
+      badge_html = ""
+      if al["faltas_previas"] == 1:
+        badge_html = (
+            '<span class="badge-semaforo sem-coral">⚠️ Faltó clase'
+            " anterior</span>"
+        )
+      elif al["faltas_previas"] == 2:
+        badge_html = (
+            '<span class="badge-semaforo sem-naranja">⚠️ Faltó 2 clases'
+            " anteriores</span>"
+        )
+      elif al["faltas_previas"] >= 3:
+        badge_html = (
+            f'<span class="badge-semaforo sem-rojo">🚨 Faltó'
+            f' {al["faltas_previas"]} clases anteriores</span>'
+        )
+
+      c_nom, c_est = st.columns([3, 2])
+      with c_nom:
+        st.markdown(
+            f'<div class="card-alumno {cfg["clase_css"]}"><span>{al["nombre"]}'
+            f" {badge_html}</span></div>",
+            unsafe_allow_html=True,
+        )
+      with c_est:
+        st.markdown(
+            f'<div style="text-align: right; padding-top: 10px; font-weight:'
+            f' bold; font-size: 1.05rem;">{cfg["texto_badge"]}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+    if st.button(
+        "🚪 Salir / Cerrar Sesión", type="primary", use_container_width=True
+    ):
       cerrar_y_salir()
       st.rerun()
 
@@ -355,7 +410,7 @@ if modo_vista == "📝 Pase de Lista Activo":
               )
             with c_est:
               st.markdown(
-                  '<div style="text-align: right; padding-top: 10px; font-weight:'
+                  f'<div style="text-align: right; padding-top: 10px; font-weight:'
                   f' bold; font-size: 1.05rem;">{cfg["texto_badge"]}</div>',
                   unsafe_allow_html=True,
               )
@@ -374,32 +429,81 @@ if modo_vista == "📝 Pase de Lista Activo":
               f" `{str(clase.inicio)[:5]} - {str(clase.fin)[:5]} hrs`"
           )
 
-          query_alumnos = text(
-              "SELECT idalumno, nombre FROM alumno WHERE LTRIM(RTRIM(grupo)) ="
-              " :grp ORDER BY nombre"
-          )
+          query_alumnos_semaforo = text("""
+                        WITH RegistrosOrdenados AS (
+                            SELECT 
+                                a.idalumno,
+                                a.estado,
+                                ROW_NUMBER() OVER (PARTITION BY a.idalumno ORDER BY a.fecha DESC, a.hora DESC) as rn
+                            FROM asistencia a
+                            INNER JOIN alumno al ON a.idalumno = al.idalumno
+                            WHERE LTRIM(RTRIM(al.grupo)) = :grp AND a.fecha < :fec
+                        )
+                        SELECT 
+                            al.idalumno, 
+                            al.nombre,
+                            ISNULL((
+                                SELECT CASE 
+                                    WHEN r1.estado <> 0 THEN 0
+                                    WHEN r2.estado <> 0 THEN 1
+                                    WHEN r3.estado <> 0 THEN 2
+                                    ELSE 3
+                                END
+                                FROM RegistrosOrdenados r1
+                                LEFT JOIN RegistrosOrdenados r2 ON r1.idalumno = r2.idalumno AND r2.rn = 2
+                                LEFT JOIN RegistrosOrdenados r3 ON r1.idalumno = r3.idalumno AND r3.rn = 3
+                                WHERE r1.idalumno = al.idalumno AND r1.rn = 1
+                            ), 0) AS faltas_previas
+                        FROM alumno al
+                        WHERE LTRIM(RTRIM(al.grupo)) = :grp
+                        ORDER BY al.nombre
+                    """)
+
           df_alumnos = pd.read_sql(
-              query_alumnos, engine, params={"grp": clase.grupo}
+              query_alumnos_semaforo,
+              engine,
+              params={"grp": clase.grupo, "fec": fecha_sql},
           )
 
           if not df_alumnos.empty:
             st.caption(
                 "👆 **Toca el botón** de cualquier alumno para cambiar su"
-                " estado si no asistió."
+                " estado si no asistió. Observa la insignia de faltas previas."
             )
             st.divider()
 
             for idx, row in df_alumnos.iterrows():
               id_al = row["idalumno"]
+              faltas_previas = int(row["faltas_previas"])
+
               clave_estado = f"estado_alumno_{id_al}"
               if clave_estado not in st.session_state:
                 st.session_state[clave_estado] = 1
 
               cfg = CONFIG_ESTADOS[st.session_state[clave_estado]]
+
+              badge_html = ""
+              if faltas_previas == 1:
+                badge_html = (
+                    '<span class="badge-semaforo sem-coral">⚠️ Faltó clase'
+                    " anterior</span>"
+                )
+              elif faltas_previas == 2:
+                badge_html = (
+                    '<span class="badge-semaforo sem-naranja">⚠️ Faltó 2 clases'
+                    " anteriores</span>"
+                )
+              elif faltas_previas >= 3:
+                badge_html = (
+                    f'<span class="badge-semaforo sem-rojo">🚨 Faltó'
+                    f" {faltas_previas} clases anteriores</span>"
+                )
+
               c_nom, c_btn = st.columns([3, 2])
               with c_nom:
                 st.markdown(
-                    f'<div class="card-alumno {cfg["clase_css"]}"><span>{row["nombre"]}</span></div>',
+                    f'<div class="card-alumno {cfg["clase_css"]}"><span>{row["nombre"]}'
+                    f" {badge_html}</span></div>",
                     unsafe_allow_html=True,
                 )
               with c_btn:
@@ -421,6 +525,8 @@ if modo_vista == "📝 Pase de Lista Activo":
             ):
               try:
                 incidencias = 0
+                alumnos_registro = []
+
                 with engine.begin() as conn:
                   conn.execute(
                       text("""
@@ -443,6 +549,13 @@ if modo_vista == "📝 Pase de Lista Activo":
                     est_fin = int(
                         st.session_state.get(f"estado_alumno_{id_al}", 1)
                     )
+
+                    alumnos_registro.append({
+                        "nombre": row["nombre"],
+                        "estado": est_fin,
+                        "faltas_previas": int(row["faltas_previas"]),
+                    })
+
                     if est_fin != 1:
                       conn.execute(
                           text("""
@@ -468,6 +581,7 @@ if modo_vista == "📝 Pase de Lista Activo":
                     "hora_sql": hora_sql,
                     "clave_docente": id_docente,
                     "total_incidencias": incidencias,
+                    "alumnos_guardados": alumnos_registro,
                 }
                 st.session_state["registro_exitoso"] = True
                 st.rerun()
@@ -475,7 +589,6 @@ if modo_vista == "📝 Pase de Lista Activo":
                 st.error(f"❌ Error al guardar: {e}")
 
       else:
-        # AVISO DE SIN CLASE ACTIVA
         st.info(
             f"⌛ **Sin clase asignada en este momento** ({nombre_dia} -"
             f" {hora_sql[:5]} hrs)."
@@ -484,7 +597,8 @@ if modo_vista == "📝 Pase de Lista Activo":
                 No hay ningún grupo programado para tu usuario en esta hora según el horario escolar.
                 
                 👈 **Utiliza el menú de la izquierda para:**
-                * **📅 Mi Horario de Clases:** Ver tu carga horaria semanal completa.
+                * **📅 Mi Horario de Clases:** Ver tu carga horaria semanal personal.
+                * **📆 Consultar Horarios Docentes:** Consultar el horario de cualquier maestro de la plantilla.
                 * **📊 Consulta Histórica:** Generar y descargar reportes de asistencia.
                 """)
 
@@ -540,7 +654,85 @@ elif modo_vista == "📅 Mi Horario de Clases":
   except Exception as err_m2:
     st.error(f"⚠️ Error al consultar horario: {err_m2}")
 
-# === VISTA 3: CONSULTA HISTÓRICA ===
+# === VISTA 3: CONSULTAR HORARIOS DOCENTES ===
+elif modo_vista == "📆 Consultar Horarios Docentes":
+  st.subheader("📆 Búsqueda de Horarios por Docente")
+  try:
+    query_maestros = text("""
+            SELECT DISTINCT 
+                LTRIM(RTRIM(m.idmaestro)) AS idmaestro, 
+                LTRIM(RTRIM(m.usuario)) AS usuario
+            FROM maestros m
+            INNER JOIN Horario_Grupo h ON LTRIM(RTRIM(m.idmaestro)) = LTRIM(RTRIM(h.idmaestro))
+            ORDER BY m.usuario
+        """)
+
+    with engine.connect() as conn:
+      df_maestros = pd.read_sql(query_maestros, conn)
+
+    if not df_maestros.empty:
+      mapa_maestros = {
+          f"{row['usuario']} (ID: {row['idmaestro']})": row["idmaestro"]
+          for idx, row in df_maestros.iterrows()
+      }
+      docente_sel_label = st.selectbox(
+          "🔍 Selecciona un docente:", list(mapa_maestros.keys())
+      )
+      id_docente_buscado = mapa_maestros[docente_sel_label]
+
+      query_horario_doc = text("""
+                SELECT 
+                    h.dia_semana,
+                    h.inicio,
+                    h.fin,
+                    LTRIM(RTRIM(h.grupo)) AS grupo,
+                    ISNULL(m.nombre, 'Sin asignar') AS materia
+                FROM Horario_Grupo h
+                LEFT JOIN materia m ON h.idmateria = m.idmateria
+                WHERE LTRIM(RTRIM(h.idmaestro)) = :id_m
+                ORDER BY h.dia_semana, h.inicio
+            """)
+
+      with engine.connect() as conn:
+        df_horario_doc = pd.read_sql(
+            query_horario_doc, conn, params={"id_m": id_docente_buscado}
+        )
+
+      if not df_horario_doc.empty:
+        dias_map = {
+            1: "Lunes",
+            2: "Martes",
+            3: "Miércoles",
+            4: "Jueves",
+            5: "Viernes",
+            6: "Sábado",
+            7: "Domingo",
+        }
+        df_horario_doc["Día"] = df_horario_doc["dia_semana"].map(dias_map)
+        df_horario_doc["Horario"] = (
+            df_horario_doc["inicio"].astype(str).str[:5]
+            + " - "
+            + df_horario_doc["fin"].astype(str).str[:5]
+        )
+        df_mostrar_doc = df_horario_doc[
+            ["Día", "Horario", "grupo", "materia"]
+        ].rename(columns={"grupo": "Grupo", "materia": "Materia"})
+
+        st.success(
+            f"👤 **Horario asignado para:** `{docente_sel_label}` | 📊 **Total"
+            f" bloques:** `{len(df_mostrar_doc)}`"
+        )
+        st.dataframe(df_mostrar_doc, use_container_width=True, hide_index=True)
+      else:
+        st.warning("⚠️ No se encontraron materias ni horarios para este docente.")
+    else:
+      st.warning(
+          "⚠️ No hay docentes registrados con horarios asignados en el sistema."
+      )
+  except Exception as err_m_doc:
+    st.error(f"⚠️ Error al consultar el horario docente: {err_m_doc}")
+
+# === VISTA 4: CONSULTA HISTÓRICA ===
 elif modo_vista == "📊 Consulta Histórica":
   st.subheader("🔍 Consulta de Asistencia por Rango de Fechas")
   try:
