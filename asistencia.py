@@ -627,7 +627,8 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 h.inicio,
                 h.fin,
                 LTRIM(RTRIM(h.grupo)) AS grupo,
-                ISNULL(m.nombre, 'Sin asignar') AS materia
+                ISNULL(m.nombre, 'Sin asignar') AS materia,
+                ISNULL(CAST(h.aula AS VARCHAR), 'Sin asignar') AS aula
             FROM Horario_Grupo h
             LEFT JOIN materia m ON h.idmateria = m.idmateria
             WHERE LTRIM(RTRIM(h.idmaestro)) = :id_m
@@ -653,8 +654,8 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 + " - "
                 + df_horario["fin"].astype(str).str[:5]
             )
-            df_mostrar = df_horario[["Día", "Horario", "grupo", "materia"]].rename(
-                columns={"grupo": "Grupo", "materia": "Materia"}
+            df_mostrar = df_horario[["Día", "Horario", "grupo", "materia", "aula"]].rename(
+                columns={"grupo": "Grupo", "materia": "Materia", "aula": "Aula"}
             )
 
             st.info(f"📊 **Bloques de clase asignados:** `{len(df_mostrar)}`")
