@@ -6,7 +6,9 @@ import pyodbc
 from sqlalchemy import create_engine, text
 import streamlit as st
 
+# ------------------------------------------------------------------
 # 1. Configuración de página
+# ------------------------------------------------------------------
 st.set_page_config(
     page_title="Control de Asistencia - CBTis 139",
     layout="wide",
@@ -14,7 +16,7 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------
-# Estilos CSS Limpios con Semaforización de Faltas Previas
+# Estilos CSS Limpios con Semaforización
 # ------------------------------------------------------------------
 st.markdown(
     """
@@ -429,7 +431,6 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f" `{str(clase.inicio)[:5]} - {str(clase.fin)[:5]} hrs`"
                     )
 
-                    # QUERY CORREGIDA: Calcula faltas consecutivas verdaderas previas a la fecha actual
                     query_alumnos_semaforo = text("""
                         WITH AsistenciasOrdenadas AS (
                             SELECT 
@@ -447,7 +448,7 @@ if modo_vista == "📝 Pase de Lista Activo":
                                 idalumno,
                                 COUNT(*) as total_faltas
                             FROM AsistenciasOrdenadas
-                            WHERE rn <= 5 -- Evalúa las últimas 5 sesiones
+                            WHERE rn <= 5
                             GROUP BY idalumno
                             HAVING MIN(CASE WHEN rn <= 3 THEN estado ELSE 1 END) = 0
                         )
@@ -610,62 +611,223 @@ if modo_vista == "📝 Pase de Lista Activo":
                     No hay ningún grupo programado para tu usuario en esta hora según el horario escolar.
                     
                     👈 **Utiliza el menú de la izquierda para:**
-                    * **📅 Mi Horario de Clases:** Ver tu carga horaria semanal personal.
+                    * **📅 Mi Horario de Clases:** Ver tu carga horaria semanal personal y registrar/consultar notas por bloque de horario.
                     * **📊 Consulta Histórica:** Generar y descargar reportes de asistencia.
                     """)
 
         except Exception as err_m1:
             st.error(f"⚠️ Error al consultar la base de datos: {err_m1}")
 
-# === VISTA 2: MI HORARIO ===
+# === VISTA 2: MI HORARIO Y NOTAS ===
 elif modo_vista == "📅 Mi Horario de Clases":
     st.subheader("📅 Mi Horario Semanal de Clases")
+    
     try:
+        ahora = datetime.now()
+        hoy = ahora.date()
+        dia_semana_hoy = hoy.isoweekday()  # 1 = Lunes, ..., 7 = Domingo
+        hora_sql = ahora.strftime("%H:%M:%S")
+
+        inicio_semana = hoy - timedelta(days=hoy.weekday())  # Lunes de esta semana
+        fin_semana = inicio_semana + timedelta(days=6)       # Domingo de esta semana
+
         query_horario = text("""
             SELECT 
+                h.idhorario,
                 h.dia_semana,
                 h.inicio,
                 h.fin,
                 LTRIM(RTRIM(h.grupo)) AS grupo,
                 ISNULL(m.nombre, 'Sin asignar') AS materia,
-                ISNULL(CAST(h.aula AS VARCHAR), 'Sin asignar') AS aula
+                ISNULL(CAST(h.aula AS VARCHAR(50)), 'Sin asignar') AS aula,
+                COUNT(n.idnota) AS notas_semana_actual
             FROM Horario_Grupo h
             LEFT JOIN materia m ON h.idmateria = m.idmateria
-            WHERE LTRIM(RTRIM(h.idmaestro)) = :id_m
+            LEFT JOIN Nota n ON LTRIM(RTRIM(CAST(h.idhorario AS VARCHAR(50)))) = LTRIM(RTRIM(CAST(n.idhorario AS VARCHAR(50))))
+                            AND n.fecha BETWEEN :f_inicio AND :f_fin
+            WHERE LTRIM(RTRIM(CAST(h.idmaestro AS VARCHAR(50)))) = :id_m
+            GROUP BY h.idhorario, h.dia_semana, h.inicio, h.fin, h.grupo, m.nombre, h.aula
             ORDER BY h.dia_semana, h.inicio
         """)
 
         with engine.connect() as conn:
-            df_horario = pd.read_sql(query_horario, conn, params={"id_m": id_docente})
+            df_horario = pd.read_sql(
+                query_horario, 
+                conn, 
+                params={
+                    "id_m": str(id_docente).strip(),
+                    "f_inicio": inicio_semana.strftime("%Y-%m-%d"),
+                    "f_fin": fin_semana.strftime("%Y-%m-%d")
+                }
+            )
 
         if not df_horario.empty:
             dias_map = {
-                1: "Lunes",
-                2: "Martes",
-                3: "Miércoles",
-                4: "Jueves",
-                5: "Viernes",
-                6: "Sábado",
-                7: "Domingo",
+                1: "Lunes", 2: "Martes", 3: "Miércoles",
+                4: "Jueves", 5: "Viernes", 6: "Sábado", 7: "Domingo"
             }
+            
             df_horario["Día"] = df_horario["dia_semana"].map(dias_map)
             df_horario["Horario"] = (
                 df_horario["inicio"].astype(str).str[:5]
                 + " - "
                 + df_horario["fin"].astype(str).str[:5]
             )
-            df_mostrar = df_horario[["Día", "Horario", "grupo", "materia", "aula"]].rename(
-                columns={"grupo": "Grupo", "materia": "Materia", "aula": "Aula"}
+
+            def verificar_cumplida(row):
+                dia_clase = int(row["dia_semana"])
+                hora_fin_clase = str(row["fin"])
+                if dia_clase < dia_semana_hoy:
+                    return True
+                elif dia_clase == dia_semana_hoy and hora_fin_clase < hora_sql:
+                    return True
+                return False
+
+            df_horario["Cumplida"] = df_horario.apply(verificar_cumplida, axis=1)
+            
+            df_horario["Estatus"] = df_horario.apply(
+                lambda r: "📌 Nota guardada" if r["notas_semana_actual"] > 0 
+                else ("✔️ Concluida" if r["Cumplida"] else "⏳ Pendiente"),
+                axis=1
             )
 
-            st.info(f"📊 **Bloques de clase asignados:** `{len(df_mostrar)}`")
-            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
-        else:
-            st.warning(
-                "⚠️ No tienes bloques de clase asignados en la tabla `Horario_Grupo`."
+            # --- SE DEFINE LA ORDENACIÓN DE COLUMNAS PONIENDO 'ID Horario' AL FINAL ---
+            df_mostrar = df_horario[[
+                "Estatus", 
+                "Día", 
+                "Horario", 
+                "materia", 
+                "aula", 
+                "grupo", 
+                "idhorario"
+            ]].rename(
+                columns={
+                    "materia": "Materia", 
+                    "aula": "Aula",
+                    "grupo": "Grupo",
+                    "idhorario": "ID Horario"
+                }
             )
+
+            # --- APLICACIÓN DE ESTILOS VISUALES ---
+            def estilar_tabla_limpia(df):
+                styles = pd.DataFrame('', index=df.index, columns=df.columns)
+                
+                for idx in df.index:
+                    es_cumplida = df_horario.loc[idx, "Cumplida"]
+                    tiene_nota = df_horario.loc[idx, "notas_semana_actual"] > 0
+                    
+                    # 1. Fondo general: clases concluidas (gris suave) / pendientes (blanco)
+                    if es_cumplida:
+                        estilo_base = "background-color: #F8FAFC; color: #64748B;"
+                    else:
+                        estilo_base = "background-color: #FFFFFF; color: #0F172A; font-weight: 500;"
+                        
+                    styles.loc[idx, :] = estilo_base
+                    
+                    # 2. Resaltar únicamente la celda de 'Estatus' cuando exista nota
+                    if tiene_nota:
+                        styles.loc[idx, "Estatus"] = "background-color: #FEF08A; color: #854D0E; font-weight: bold;"
+
+                return styles
+
+            df_styled = df_mostrar.style.apply(estilar_tabla_limpia, axis=None)
+
+            st.caption("👆 **Toca o selecciona una fila** para consultar el historial de observaciones o registrar una nueva nota.")
+
+            evento_seleccion = st.dataframe(
+                df_styled,
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row"
+            )
+
+            filas_seleccionadas = evento_seleccion.selection.rows
+
+            # --- DETALLE Y ADMINISTRACIÓN DE LA CLASE SELECCIONADA ---
+            if filas_seleccionadas:
+                idx_sel = filas_seleccionadas[0]
+                datos_clase = df_horario.iloc[idx_sel]
+                id_horario_str = str(datos_clase["idhorario"]).strip()
+
+                st.divider()
+                st.subheader(f"📌 Administrar Notas: {datos_clase['materia']} ({datos_clase['grupo']})")
+                st.caption(f"⏰ **Horario habitual:** {datos_clase['Día']} de {datos_clase['Horario']} | **Aula:** {datos_clase['aula']}")
+
+                col_cap, col_hist = st.columns([1, 1])
+
+                # COLUMNA IZQUIERDA: Registro / Edición de Nota por Fecha
+                with col_cap:
+                    st.markdown("### ✍️ Registrar / Actualizar Nota")
+                    fecha_nota = st.date_input("📅 Fecha de la clase:", value=date.today())
+
+                    query_nota_fecha = text("""
+                        SELECT idnota, CAST(nota AS VARCHAR(MAX)) AS texto_nota
+                        FROM Nota
+                        WHERE LTRIM(RTRIM(CAST(idhorario AS VARCHAR(50)))) = :id_h
+                          AND fecha = :fecha
+                    """)
+                    with engine.connect() as conn:
+                        nota_fecha = conn.execute(query_nota_fecha, {
+                            "id_h": id_horario_str,
+                            "fecha": fecha_nota.strftime("%Y-%m-%d")
+                        }).fetchone()
+
+                    texto_existente = nota_fecha.texto_nota if nota_fecha else ""
+                    
+                    texto_nota = st.text_area("Observación / Bitácora del día:", value=texto_existente, height=130)
+
+                    if st.button("💾 Guardar Nota para esta Fecha", type="primary", use_container_width=True):
+                        if texto_nota.strip():
+                            try:
+                                with engine.begin() as conn:
+                                    if nota_fecha:
+                                        conn.execute(text("UPDATE Nota SET nota = :n WHERE idnota = :id"), {
+                                            "n": texto_nota.strip(),
+                                            "id": nota_fecha.idnota
+                                        })
+                                    else:
+                                        conn.execute(text("INSERT INTO Nota (fecha, idhorario, nota) VALUES (:f, :h, :n)"), {
+                                            "f": fecha_nota.strftime("%Y-%m-%d"),
+                                            "h": id_horario_str,
+                                            "n": texto_nota.strip()
+                                        })
+                                st.success("✅ Nota guardada correctamente.")
+                                st.rerun()
+                            except Exception as e_sav:
+                                st.error(f"❌ Error al guardar en la base de datos: {e_sav}")
+                        else:
+                            st.warning("⚠️ Ingresa una observación antes de guardar.")
+
+                # COLUMNA DERECHA: Histórico Completo de Notas
+                with col_hist:
+                    st.markdown("### 📚 Histórico de Notas (Todas las fechas)")
+                    
+                    query_historico = text("""
+                        SELECT 
+                            CONVERT(VARCHAR(10), fecha, 103) AS fecha_formato,
+                            CAST(nota AS VARCHAR(MAX)) AS texto_nota
+                        FROM Nota
+                        WHERE LTRIM(RTRIM(CAST(idhorario AS VARCHAR(50)))) = :id_h
+                        ORDER BY fecha DESC
+                    """)
+                    
+                    with engine.connect() as conn:
+                        df_historico = pd.read_sql(query_historico, conn, params={"id_h": id_horario_str})
+
+                    if not df_historico.empty:
+                        for _, r_hist in df_historico.iterrows():
+                            with st.expander(f"📅 Fecha: {r_hist['fecha_formato']}"):
+                                st.write(r_hist["texto_nota"])
+                    else:
+                        st.info("ℹ️ Este bloque de horario aún no cuenta con notas registradas en el histórico.")
+
+        else:
+            st.warning("⚠️ No se encontraron clases asignadas para el docente seleccionado.")
+
     except Exception as err_m2:
-        st.error(f"⚠️ Error al consultar horario: {err_m2}")
+        st.error(f"⚠️ Se produjo un error al consultar el horario: {err_m2}")
 
 # === VISTA 3: CONSULTA HISTÓRICA ===
 elif modo_vista == "📊 Consulta Histórica":
