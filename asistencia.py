@@ -354,6 +354,19 @@ if modo_vista == "📝 Pase de Lista Activo":
                 id_horario_str = str(clase.idhorario).strip()
                 grupo_str = str(clase.grupo).strip()
 
+                # --- CONSULTAR SI EXISTE NOTA PROGRAMADA PARA LA CLASE DE HOY ---
+                query_nota_hoy = text("""
+                    SELECT CAST(nota AS VARCHAR(MAX)) AS texto_nota
+                    FROM Nota
+                    WHERE LTRIM(RTRIM(CAST(idhorario AS VARCHAR(50)))) = :id_h
+                      AND fecha = :fec
+                """)
+                with engine.connect() as conn:
+                    nota_hoy = conn.execute(query_nota_hoy, {
+                        "id_h": id_horario_str,
+                        "fec": fecha_sql
+                    }).fetchone()
+
                 query_firma_docente = text("""
                     SELECT hora, estatus 
                     FROM asistencia_docente 
@@ -378,6 +391,11 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f" `{clase.materia if clase.materia else 'Sin asignar'}` | ⏰"
                         f" `{str(clase.inicio)[:5]} - {str(clase.fin)[:5]} hrs`"
                     )
+
+                    # Mostrar nota si existía programada
+                    if nota_hoy and nota_hoy.texto_nota:
+                        st.warning(f"📌 **Nota/Recordatorio para hoy:** {nota_hoy.texto_nota}")
+
                     st.caption(
                         "🔒 Los datos de este grupo ya fueron guardados para tu sesión de"
                         " hoy."
@@ -430,6 +448,10 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f" `{clase.materia if clase.materia else 'Sin asignar'}` | ⏰"
                         f" `{str(clase.inicio)[:5]} - {str(clase.fin)[:5]} hrs`"
                     )
+
+                    # Mostrar nota prominente si se registró previamente para esta sesión
+                    if nota_hoy and nota_hoy.texto_nota:
+                        st.warning(f"📌 **Nota/Recordatorio registrado para hoy:**\n\n_{nota_hoy.texto_nota}_")
 
                     query_alumnos_semaforo = text("""
                         WITH AsistenciasOrdenadas AS (
@@ -674,7 +696,7 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 + df_horario["fin"].astype(str).str[:5]
             )
 
-            # --- EVALUACIÓN DE ESTADO POR FECHA Y HORA EXACTA ---
+            # --- EVALUACIÓN EXACTA DE ESTADO POR DÍA Y HORA ---
             def determinar_estado_tiempo(row):
                 dia_clase = int(row["dia_semana"])
                 hora_inicio = str(row["inicio"])
@@ -701,7 +723,7 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 axis=1
             )
 
-            # --- REORDENAMIENTO DE COLUMNAS: 'Grupo' DESPUÉS DE 'Día' Y 'ID Horario' AL FINAL ---
+            # --- REORDENAMIENTO DE COLUMNAS A MOSTRAR ---
             df_mostrar = df_horario[[
                 "Estatus", 
                 "Día", 
@@ -719,33 +741,32 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 }
             )
 
-            # --- APLICACIÓN DE ESTILOS POR AZULES ---
-            def estilar_tabla_limpia(df):
+            # --- APLICACIÓN RIGUROSA DE COLORES DE FONDO A TODA LA TABLA ---
+            def estilar_tabla_matriz(df):
                 styles = pd.DataFrame('', index=df.index, columns=df.columns)
                 
                 for idx in df.index:
                     est_tiempo = df_horario.loc[idx, "estado_tiempo"]
                     tiene_nota = df_horario.loc[idx, "notas_semana_actual"] > 0
                     
-                    # 1. Pasadas: Azul bajito (#E0F2FE)
+                    # 1. Día y Hora Vencida: Azul bajito (#E0F2FE)
                     if est_tiempo == "pasada":
                         estilo_base = "background-color: #E0F2FE; color: #0369A1;"
-                    # 2. En curso: Azul oscuro (#0284C7) con texto blanco y negrita
+                    # 2. Hora Actual (En Curso): Azul fuerte (#0284C7) con letras blancas
                     elif est_tiempo == "en_curso":
                         estilo_base = "background-color: #0284C7; color: #FFFFFF; font-weight: bold;"
-                    # 3. Futuras: Sin fondo (Blanco #FFFFFF)
+                    # 3. Hora/Día Futuro: Fondo Blanco (#FFFFFF)
                     else:
                         estilo_base = "background-color: #FFFFFF; color: #0F172A;"
                         
                     styles.loc[idx, :] = estilo_base
                     
-                    # Resaltar en amarillo únicamente la celda 'Estatus' si tiene nota registrada
                     if tiene_nota:
                         styles.loc[idx, "Estatus"] = "background-color: #FEF08A; color: #854D0E; font-weight: bold;"
 
                 return styles
 
-            df_styled = df_mostrar.style.apply(estilar_tabla_limpia, axis=None)
+            df_styled = df_mostrar.style.apply(estilar_tabla_matriz, axis=None)
 
             st.caption("👆 **Toca o selecciona una fila** para consultar el historial de observaciones o registrar una nueva nota.")
 
