@@ -626,7 +626,7 @@ elif modo_vista == "📅 Mi Horario de Clases":
         ahora = datetime.now()
         hoy = ahora.date()
         dia_semana_hoy = hoy.isoweekday()  # 1 = Lunes, ..., 7 = Domingo
-        hora_sql = ahora.strftime("%H:%M:%S")
+        hora_actual_str = ahora.strftime("%H:%M:%S")
 
         inicio_semana = hoy - timedelta(days=hoy.weekday())  # Lunes de esta semana
         fin_semana = inicio_semana + timedelta(days=6)       # Domingo de esta semana
@@ -674,58 +674,72 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 + df_horario["fin"].astype(str).str[:5]
             )
 
-            def verificar_cumplida(row):
+            # --- EVALUACIÓN DE ESTADO POR FECHA Y HORA EXACTA ---
+            def determinar_estado_tiempo(row):
                 dia_clase = int(row["dia_semana"])
-                hora_fin_clase = str(row["fin"])
-                if dia_clase < dia_semana_hoy:
-                    return True
-                elif dia_clase == dia_semana_hoy and hora_fin_clase < hora_sql:
-                    return True
-                return False
+                hora_inicio = str(row["inicio"])
+                hora_fin = str(row["fin"])
 
-            df_horario["Cumplida"] = df_horario.apply(verificar_cumplida, axis=1)
-            
+                if dia_clase < dia_semana_hoy:
+                    return "pasada"
+                elif dia_clase == dia_semana_hoy:
+                    if hora_actual_str >= hora_fin:
+                        return "pasada"
+                    elif hora_inicio <= hora_actual_str < hora_fin:
+                        return "en_curso"
+                    else:
+                        return "futura"
+                else:
+                    return "futura"
+
+            df_horario["estado_tiempo"] = df_horario.apply(determinar_estado_tiempo, axis=1)
+
             df_horario["Estatus"] = df_horario.apply(
                 lambda r: "📌 Nota guardada" if r["notas_semana_actual"] > 0 
-                else ("✔️ Concluida" if r["Cumplida"] else "⏳ Pendiente"),
+                else ("⚡ En Curso" if r["estado_tiempo"] == "en_curso"
+                      else ("✔️ Concluida" if r["estado_tiempo"] == "pasada" else "⏳ Pendiente")),
                 axis=1
             )
 
-            # --- SE DEFINE LA ORDENACIÓN DE COLUMNAS PONIENDO 'ID Horario' AL FINAL ---
+            # --- REORDENAMIENTO DE COLUMNAS: 'Grupo' DESPUÉS DE 'Día' Y 'ID Horario' AL FINAL ---
             df_mostrar = df_horario[[
                 "Estatus", 
                 "Día", 
+                "grupo", 
                 "Horario", 
                 "materia", 
                 "aula", 
-                "grupo", 
                 "idhorario"
             ]].rename(
                 columns={
+                    "grupo": "Grupo",
                     "materia": "Materia", 
                     "aula": "Aula",
-                    "grupo": "Grupo",
                     "idhorario": "ID Horario"
                 }
             )
 
-            # --- APLICACIÓN DE ESTILOS VISUALES ---
+            # --- APLICACIÓN DE ESTILOS POR AZULES ---
             def estilar_tabla_limpia(df):
                 styles = pd.DataFrame('', index=df.index, columns=df.columns)
                 
                 for idx in df.index:
-                    es_cumplida = df_horario.loc[idx, "Cumplida"]
+                    est_tiempo = df_horario.loc[idx, "estado_tiempo"]
                     tiene_nota = df_horario.loc[idx, "notas_semana_actual"] > 0
                     
-                    # 1. Fondo general: clases concluidas (gris suave) / pendientes (blanco)
-                    if es_cumplida:
-                        estilo_base = "background-color: #F8FAFC; color: #64748B;"
+                    # 1. Pasadas: Azul bajito (#E0F2FE)
+                    if est_tiempo == "pasada":
+                        estilo_base = "background-color: #E0F2FE; color: #0369A1;"
+                    # 2. En curso: Azul oscuro (#0284C7) con texto blanco y negrita
+                    elif est_tiempo == "en_curso":
+                        estilo_base = "background-color: #0284C7; color: #FFFFFF; font-weight: bold;"
+                    # 3. Futuras: Sin fondo (Blanco #FFFFFF)
                     else:
-                        estilo_base = "background-color: #FFFFFF; color: #0F172A; font-weight: 500;"
+                        estilo_base = "background-color: #FFFFFF; color: #0F172A;"
                         
                     styles.loc[idx, :] = estilo_base
                     
-                    # 2. Resaltar únicamente la celda de 'Estatus' cuando exista nota
+                    # Resaltar en amarillo únicamente la celda 'Estatus' si tiene nota registrada
                     if tiene_nota:
                         styles.loc[idx, "Estatus"] = "background-color: #FEF08A; color: #854D0E; font-weight: bold;"
 
