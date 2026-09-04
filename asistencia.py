@@ -354,17 +354,16 @@ if modo_vista == "📝 Pase de Lista Activo":
                 id_horario_str = str(clase.idhorario).strip()
                 grupo_str = str(clase.grupo).strip()
 
-                # --- CONSULTAR SI EXISTE NOTA PROGRAMADA PARA LA CLASE DE HOY ---
+                # --- CONSULTAR LA ÚLTIMA NOTA REGISTRADA PARA ESTE HORARIO ---
                 query_nota_hoy = text("""
-                    SELECT CAST(nota AS VARCHAR(MAX)) AS texto_nota
+                    SELECT TOP 1 CAST(nota AS VARCHAR(MAX)) AS texto_nota, fecha
                     FROM Nota
                     WHERE LTRIM(RTRIM(CAST(idhorario AS VARCHAR(50)))) = :id_h
-                      AND fecha = :fec
+                    ORDER BY fecha DESC
                 """)
                 with engine.connect() as conn:
                     nota_hoy = conn.execute(query_nota_hoy, {
-                        "id_h": id_horario_str,
-                        "fec": fecha_sql
+                        "id_h": id_horario_str
                     }).fetchone()
 
                 query_firma_docente = text("""
@@ -392,9 +391,10 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f" `{str(clase.inicio)[:5]} - {str(clase.fin)[:5]} hrs`"
                     )
 
-                    # Mostrar nota si existía programada
+                    # Mostrar última nota registrada
                     if nota_hoy and nota_hoy.texto_nota:
-                        st.warning(f"📌 **Nota/Recordatorio para hoy:** {nota_hoy.texto_nota}")
+                        f_nota = nota_hoy.fecha.strftime("%d/%m/%Y") if hasattr(nota_hoy.fecha, 'strftime') else str(nota_hoy.fecha)
+                        st.warning(f"📌 **Última nota ({f_nota}):** {nota_hoy.texto_nota}")
 
                     st.caption(
                         "🔒 Los datos de este grupo ya fueron guardados para tu sesión de"
@@ -449,9 +449,10 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f" `{str(clase.inicio)[:5]} - {str(clase.fin)[:5]} hrs`"
                     )
 
-                    # Mostrar nota prominente si se registró previamente para esta sesión
+                    # Mostrar última nota registrada prominente
                     if nota_hoy and nota_hoy.texto_nota:
-                        st.warning(f"📌 **Nota/Recordatorio registrado para hoy:**\n\n_{nota_hoy.texto_nota}_")
+                        f_nota = nota_hoy.fecha.strftime("%d/%m/%Y") if hasattr(nota_hoy.fecha, 'strftime') else str(nota_hoy.fecha)
+                        st.warning(f"📌 **Última nota registrada ({f_nota}):**\n\n_{nota_hoy.texto_nota}_")
 
                     query_alumnos_semaforo = text("""
                         WITH AsistenciasOrdenadas AS (
