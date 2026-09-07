@@ -16,25 +16,13 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------
-# Estilos CSS Limpios con Corrección de Márgenes para Tabletas
+# Estilos CSS Limpios con Semaforización
 # ------------------------------------------------------------------
 st.markdown(
     """
     <style>
-    /* 1. Ocultar encabezados y pies de página nativos de Streamlit */
-    footer { visibility: hidden !important; height: 0px !important; display: none !important; }
-    header[data-testid="stHeader"] { display: none !important; height: 0px !important; }
-    div[data-testid="stToolbar"] { display: none !important; }
-    div[data-testid="stDecoration"] { display: none !important; }
+    footer {visibility: hidden;}
     
-    /* 2. Forzar al contenedor principal a subir y ocupar la parte superior en Android/Tablets */
-    .main .block-container {
-        padding-top: 0.5rem !important;
-        margin-top: -3.5rem !important; /* Absorbe el espacio en blanco superior */
-        padding-bottom: 1rem !important;
-    }
-    
-    /* 3. Tarjetas de alumnos */
     .card-alumno {
         padding: 10px 14px;
         border-radius: 8px;
