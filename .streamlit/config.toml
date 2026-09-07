@@ -1,0 +1,5 @@
+[server]
+enableWebsockets = false
+
+[client]
+toolbarMode = "minimal"
