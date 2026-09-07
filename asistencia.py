@@ -16,31 +16,48 @@ st.set_page_config(
 )
 
 # ------------------------------------------------------------------
-# Estilos CSS Limpios con Corrección de Márgenes para Tabletas
+# Estilos CSS Limpios: Ajuste de Pantalla Completa para Tabletas
 # ------------------------------------------------------------------
 st.markdown(
     """
     <style>
-    /* 1. Ocultar encabezados y pies de página nativos de Streamlit */
-    footer { visibility: hidden !important; height: 0px !important; display: none !important; }
-    header[data-testid="stHeader"] { display: none !important; height: 0px !important; }
+    /* 1. Ocultar componentes nativos de interfaz */
+    footer { display: none !important; }
+    header[data-testid="stHeader"] { display: none !important; }
     div[data-testid="stToolbar"] { display: none !important; }
     div[data-testid="stDecoration"] { display: none !important; }
     
-    /* 2. Forzar al contenedor principal a subir y ocupar la parte superior en Android/Tablets */
-    .main .block-container {
-        padding-top: 0.5rem !important;
-        margin-top: -3.5rem !important; /* Absorbe el espacio en blanco superior */
-        padding-bottom: 1rem !important;
+    /* 2. Forzar al contenedor global a ocupar todo el alto de la pantalla */
+    html, body, [data-testid="stApp"], .stApp {
+        height: 100vh !important;
+        min-height: 100vh !important;
+        max-height: 100vh !important;
+        overflow-y: auto !important;
+    }
+
+    /* 3. Ajuste de contenedores para expandir el área principal */
+    .stAppViewContainer, .stMain, [data-testid="stAppViewContainer"] {
+        padding-top: 0px !important;
+        margin-top: 0px !important;
+        height: 100% !important;
     }
     
-    /* 3. Tarjetas de alumnos */
+    .main .block-container, [data-testid="stMainBlockContainer"] {
+        padding-top: 0.5rem !important;
+        margin-top: -3.2rem !important; /* Absorbe la barra superior vacía */
+        padding-bottom: 3rem !important;
+        min-height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    /* 4. Tarjetas de alumnos */
     .card-alumno {
-        padding: 10px 14px;
+        padding: 12px 16px;
         border-radius: 8px;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
         font-weight: 600;
-        font-size: 1.05rem;
+        font-size: 1.1rem;
         display: flex;
         align-items: center;
         justify-content: space-between;
