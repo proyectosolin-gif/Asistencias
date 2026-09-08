@@ -454,6 +454,7 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f_nota = nota_hoy.fecha.strftime("%d/%m/%Y") if hasattr(nota_hoy.fecha, 'strftime') else str(nota_hoy.fecha)
                         st.warning(f"📌 **Última nota registrada ({f_nota}):**\n\n_{nota_hoy.texto_nota}_")
 
+                    # --- CONSULTA CORREGIDA: Evalúa asistencias previas en la materia del docente ---
                     query_alumnos_semaforo = text("""
                         WITH AsistenciasOrdenadas AS (
                             SELECT 
@@ -461,19 +462,12 @@ if modo_vista == "📝 Pase de Lista Activo":
                                 a.estado,
                                 ROW_NUMBER() OVER (PARTITION BY a.idalumno ORDER BY a.fecha DESC, a.hora DESC) AS rn
                             FROM asistencia a
+                            INNER JOIN Horario_Grupo h ON a.idhorario = h.idhorario
                             INNER JOIN alumno al ON a.idalumno = al.idalumno
                             WHERE LTRIM(RTRIM(al.grupo)) = :grp 
-                              AND a.idhorario = :id_h
+                              AND h.idmateria = :id_mat
+                              AND LTRIM(RTRIM(h.idmaestro)) = :id_doc
                               AND a.fecha < :fec
-                        ),
-                        FaltasConsecutivas AS (
-                            SELECT 
-                                idalumno,
-                                COUNT(*) as total_faltas
-                            FROM AsistenciasOrdenadas
-                            WHERE rn <= 5
-                            GROUP BY idalumno
-                            HAVING MIN(CASE WHEN rn <= 3 THEN estado ELSE 1 END) = 0
                         )
                         SELECT 
                             al.idalumno, 
@@ -499,7 +493,12 @@ if modo_vista == "📝 Pase de Lista Activo":
                     df_alumnos = pd.read_sql(
                         query_alumnos_semaforo,
                         engine,
-                        params={"grp": clase.grupo, "fec": fecha_sql, "id_h": id_horario_str},
+                        params={
+                            "grp": clase.grupo,
+                            "fec": fecha_sql,
+                            "id_mat": clase.idmateria,
+                            "id_doc": id_docente,
+                        },
                     )
 
                     if not df_alumnos.empty:
