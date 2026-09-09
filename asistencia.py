@@ -454,7 +454,7 @@ if modo_vista == "📝 Pase de Lista Activo":
                         f_nota = nota_hoy.fecha.strftime("%d/%m/%Y") if hasattr(nota_hoy.fecha, 'strftime') else str(nota_hoy.fecha)
                         st.warning(f"📌 **Última nota registrada ({f_nota}):**\n\n_{nota_hoy.texto_nota}_")
 
-                    # --- CONSULTA CORREGIDA: Evalúa asistencias previas en la materia del docente ---
+                    # --- CONSULTA EVALÚA ASISTENCIAS PREVIAS ---
                     query_alumnos_semaforo = text("""
                         WITH AsistenciasOrdenadas AS (
                             SELECT 
@@ -647,11 +647,11 @@ elif modo_vista == "📅 Mi Horario de Clases":
     try:
         ahora = datetime.now()
         hoy = ahora.date()
-        dia_semana_hoy = hoy.isoweekday()  # 1 = Lunes, ..., 7 = Domingo
+        dia_semana_hoy = hoy.isoweekday()
         hora_actual_str = ahora.strftime("%H:%M:%S")
 
-        inicio_semana = hoy - timedelta(days=hoy.weekday())  # Lunes de esta semana
-        fin_semana = inicio_semana + timedelta(days=6)       # Domingo de esta semana
+        inicio_semana = hoy - timedelta(days=hoy.weekday())
+        fin_semana = inicio_semana + timedelta(days=6)
 
         query_horario = text("""
             SELECT 
@@ -696,7 +696,6 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 + df_horario["fin"].astype(str).str[:5]
             )
 
-            # --- EVALUACIÓN EXACTA DE ESTADO POR DÍA Y HORA ---
             def determinar_estado_tiempo(row):
                 dia_clase = int(row["dia_semana"])
                 hora_inicio = str(row["inicio"])
@@ -723,7 +722,6 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 axis=1
             )
 
-            # --- REORDENAMIENTO DE COLUMNAS A MOSTRAR ---
             df_mostrar = df_horario[[
                 "Estatus", 
                 "Día", 
@@ -741,7 +739,6 @@ elif modo_vista == "📅 Mi Horario de Clases":
                 }
             )
 
-            # --- APLICACIÓN RIGUROSA DE COLORES DE FONDO A TODA LA TABLA ---
             def estilar_tabla_matriz(df):
                 styles = pd.DataFrame('', index=df.index, columns=df.columns)
                 
@@ -749,13 +746,10 @@ elif modo_vista == "📅 Mi Horario de Clases":
                     est_tiempo = df_horario.loc[idx, "estado_tiempo"]
                     tiene_nota = df_horario.loc[idx, "notas_semana_actual"] > 0
                     
-                    # 1. Día y Hora Vencida: Azul bajito (#E0F2FE)
                     if est_tiempo == "pasada":
                         estilo_base = "background-color: #E0F2FE; color: #0369A1;"
-                    # 2. Hora Actual (En Curso): Azul fuerte (#0284C7) con letras blancas
                     elif est_tiempo == "en_curso":
                         estilo_base = "background-color: #0284C7; color: #FFFFFF; font-weight: bold;"
-                    # 3. Hora/Día Futuro: Fondo Blanco (#FFFFFF)
                     else:
                         estilo_base = "background-color: #FFFFFF; color: #0F172A;"
                         
@@ -780,7 +774,6 @@ elif modo_vista == "📅 Mi Horario de Clases":
 
             filas_seleccionadas = evento_seleccion.selection.rows
 
-            # --- DETALLE Y ADMINISTRACIÓN DE LA CLASE SELECCIONADA ---
             if filas_seleccionadas:
                 idx_sel = filas_seleccionadas[0]
                 datos_clase = df_horario.iloc[idx_sel]
@@ -792,7 +785,6 @@ elif modo_vista == "📅 Mi Horario de Clases":
 
                 col_cap, col_hist = st.columns([1, 1])
 
-                # COLUMNA IZQUIERDA: Registro / Edición de Nota por Fecha
                 with col_cap:
                     st.markdown("### ✍️ Registrar / Actualizar Nota")
                     fecha_nota = st.date_input("📅 Fecha de la clase:", value=date.today())
@@ -835,7 +827,6 @@ elif modo_vista == "📅 Mi Horario de Clases":
                         else:
                             st.warning("⚠️ Ingresa una observación antes de guardar.")
 
-                # COLUMNA DERECHA: Histórico Completo de Notas
                 with col_hist:
                     st.markdown("### 📚 Histórico de Notas (Todas las fechas)")
                     
@@ -864,89 +855,179 @@ elif modo_vista == "📅 Mi Horario de Clases":
     except Exception as err_m2:
         st.error(f"⚠️ Se produjo un error al consultar el horario: {err_m2}")
 
-# === VISTA 3: CONSULTA HISTÓRICA ===
+# === VISTA 3: CONSULTA HISTÓRICA (NUEVO MÓDULO INTEGRADO) ===
 elif modo_vista == "📊 Consulta Histórica":
-    st.subheader("🔍 Consulta de Asistencia por Rango de Fechas")
-    try:
-        query_grupos = text("""
-            SELECT DISTINCT LTRIM(RTRIM(grupo)) as grupo 
-            FROM Horario_Grupo 
-            WHERE LTRIM(RTRIM(idmaestro)) = :id_m
+    st.subheader("📋 Reporte Histórico de Faltas por Materia y Período")
+
+    # 1. Funciones auxiliares del módulo adaptadas al maestro actual
+    def obtener_grupos_docente(engine, id_maestro):
+        query = text("""
+            SELECT DISTINCT LTRIM(RTRIM(grupo)) AS grupo 
+            FROM horario_grupo 
+            WHERE LTRIM(RTRIM(idmaestro)) = :id_maestro 
+              AND grupo IS NOT NULL AND LTRIM(RTRIM(grupo)) <> '' 
             ORDER BY grupo
         """)
-
         with engine.connect() as conn:
-            df_grupos = pd.read_sql(query_grupos, conn, params={"id_m": id_docente})
+            df_grupos = pd.read_sql_query(query, conn, params={"id_maestro": id_maestro})
+        return df_grupos['grupo'].tolist()
 
-        if not df_grupos.empty:
-            col_grp, col_f1, col_f2 = st.columns([2, 2, 2])
-            with col_grp:
-                grupo_sel = st.selectbox(
-                    "🏫 Selecciona Grupo:", df_grupos["grupo"].tolist()
-                )
-            with col_f1:
-                f_inicio = st.date_input(
-                    "📅 Desde:", value=date.today() - timedelta(days=15)
-                )
-            with col_f2:
-                f_fin = st.date_input("📅 Hasta:", value=date.today())
+    def obtener_materias_docente_por_grupo(engine, id_maestro, grupo):
+        query = text("""
+            SELECT DISTINCT 
+                LTRIM(RTRIM(m.nombre)) AS materia
+            FROM horario_grupo hg
+            INNER JOIN materia m ON LTRIM(RTRIM(hg.idmateria)) = LTRIM(RTRIM(m.idmateria))
+            WHERE LTRIM(RTRIM(hg.idmaestro)) = :id_maestro
+              AND LTRIM(RTRIM(hg.grupo)) = :grupo
+              AND m.nombre IS NOT NULL AND LTRIM(RTRIM(m.nombre)) <> ''
+            ORDER BY materia
+        """)
+        with engine.connect() as conn:
+            df_materias = pd.read_sql_query(query, conn, params={"id_maestro": id_maestro, "grupo": grupo})
+        return df_materias['materia'].tolist()
 
-            if st.button(
-                "🔎 Generar Reporte", type="primary", use_container_width=True
-            ):
-                query_total_clases = text("""
-                    SELECT COUNT(*) as total
-                    FROM asistencia_docente
-                    WHERE LTRIM(RTRIM(clave_docente)) = :doc
-                      AND LTRIM(RTRIM(clave_grupo)) = :grp
-                      AND fecha BETWEEN :f_i AND :f_f
-                """)
+    def generar_matriz_reporte(engine, grupo, nombre_materia, fecha_ini, fecha_fin):
+        # 1. Alumnos del grupo
+        query_alumnos = text("""
+            SELECT 
+                LTRIM(RTRIM(idalumno)) AS idalumno,
+                LTRIM(RTRIM(nombre)) AS [Nombre del Alumno]
+            FROM alumno
+            WHERE LTRIM(RTRIM(grupo)) = :grupo
+            ORDER BY nombre ASC
+        """)
+        
+        # 2. Registros de faltas desde asistencia vinculando idhorario -> horario_grupo -> materia
+        query_faltas = text("""
+            SELECT DISTINCT
+                LTRIM(RTRIM(ast.idalumno)) AS idalumno,
+                CONVERT(VARCHAR(10), ast.fecha, 103) AS fecha_formateada,
+                ast.fecha
+            FROM asistencia ast
+            INNER JOIN alumno a ON LTRIM(RTRIM(ast.idalumno)) = LTRIM(RTRIM(a.idalumno))
+            INNER JOIN horario_grupo hg ON LTRIM(RTRIM(ast.idhorario)) = LTRIM(RTRIM(hg.idhorario))
+            INNER JOIN materia m ON LTRIM(RTRIM(hg.idmateria)) = LTRIM(RTRIM(m.idmateria))
+            WHERE LTRIM(RTRIM(a.grupo)) = :grupo
+              AND LTRIM(RTRIM(m.nombre)) = :nombre_materia
+              AND ast.fecha BETWEEN :fecha_ini AND :fecha_fin
+        """)
+        
+        with engine.connect() as conn:
+            df_alumnos = pd.read_sql_query(query_alumnos, conn, params={"grupo": grupo})
+            df_faltas = pd.read_sql_query(query_faltas, conn, params={
+                "grupo": grupo, 
+                "nombre_materia": nombre_materia,
+                "fecha_ini": fecha_ini, 
+                "fecha_fin": fecha_fin
+            })
 
-                with engine.connect() as conn:
-                    clases_total = conn.execute(
-                        query_total_clases,
-                        {
-                            "doc": id_docente,
-                            "grp": grupo_sel,
-                            "f_i": f_inicio.strftime("%Y-%m-%d"),
-                            "f_f": f_fin.strftime("%Y-%m-%d"),
-                        },
-                    ).scalar()
+        if df_alumnos.empty:
+            return pd.DataFrame()
 
-                if clases_total == 0:
-                    st.warning(
-                        f"⚠️ No hay registro de clases impartidas para el grupo"
-                        f" **{grupo_sel}** en ese periodo."
-                    )
-                else:
-                    st.info(
-                        f"📌 **Total de clases impartidas en el periodo:** `{clases_total}`"
-                    )
-                    query_rep = text("""
-                        SELECT 
-                            al.idalumno AS [ID],
-                            al.nombre AS [Nombre del Alumno],
-                            ISNULL(SUM(CASE WHEN a.estado = 0 THEN 1 ELSE 0 END), 0) AS [Faltas],
-                            ISNULL(SUM(CASE WHEN a.estado = 2 THEN 1 ELSE 0 END), 0) AS [Retardos],
-                            ISNULL(SUM(CASE WHEN a.estado = 3 THEN 1 ELSE 0 END), 0) AS [Justificados]
-                        FROM alumno al
-                        LEFT JOIN asistencia a ON al.idalumno = a.idalumno AND a.fecha BETWEEN :f_i AND :f_f
-                        WHERE LTRIM(RTRIM(al.grupo)) = :grp
-                        GROUP BY al.idalumno, al.nombre
-                        ORDER BY al.nombre
-                    """)
+        # 3. Secuencia de días del período
+        rango_dias = pd.date_range(start=fecha_ini, end=fecha_fin)
+        fechas_columnas = [dia.strftime('%d/%m/%Y') for dia in rango_dias]
 
-                    df_rep = pd.read_sql(
-                        query_rep,
-                        engine,
-                        params={
-                            "grp": grupo_sel,
-                            "f_i": f_inicio.strftime("%Y-%m-%d"),
-                            "f_f": f_fin.strftime("%Y-%m-%d"),
-                        },
-                    )
-                    st.dataframe(df_rep, use_container_width=True, hide_index=True)
+        if not df_faltas.empty:
+            df_faltas['fecha_str'] = pd.to_datetime(df_faltas['fecha']).dt.strftime('%d/%m/%Y')
+
+        # 4. Matriz invertida: Si está registrado en asistencia -> 'F', de lo contrario -> 'A'
+        for fecha_col in fechas_columnas:
+            if not df_faltas.empty:
+                alumnos_con_falta = set(df_faltas[df_faltas['fecha_str'] == fecha_col]['idalumno'])
+            else:
+                alumnos_con_falta = set()
+                
+            df_alumnos[fecha_col] = df_alumnos['idalumno'].apply(lambda id_al: 'F' if id_al in alumnos_con_falta else 'A')
+
+        # 5. Total de faltas por alumno
+        df_alumnos['Total Faltas'] = df_alumnos[fechas_columnas].apply(lambda row: (row == 'F').sum(), axis=1)
+
+        # 6. Ocultar idalumno del resultado final
+        return df_alumnos.drop(columns=['idalumno'], errors='ignore')
+
+    # 2. Despliegue de Interfaz
+    try:
+        lista_grupos = obtener_grupos_docente(engine, id_docente)
+    except Exception as e:
+        st.error(f"⚠️ Error al consultar los grupos del docente: {e}")
+        lista_grupos = []
+
+    if not lista_grupos:
+        st.warning("⚠️ No tienes grupos asignados en la tabla 'horario_grupo'.")
+    else:
+        grupo_seleccionado = st.selectbox(
+            "🏫 Selecciona el Grupo:",
+            options=lista_grupos
+        )
+
+        lista_materias = []
+        if grupo_seleccionado:
+            try:
+                lista_materias = obtener_materias_docente_por_grupo(engine, id_docente, grupo_seleccionado)
+            except Exception as e:
+                st.error(f"⚠️ Error al consultar las materias: {e}")
+
+        if not lista_materias:
+            st.warning(f"⚠️ No se encontraron materias para el grupo **{grupo_seleccionado}** asignadas a tu usuario.")
         else:
-            st.warning("⚠️ No se encontraron grupos asociados a tu usuario.")
-    except Exception as err_m3:
-        st.error(f"⚠️ Error al generar el reporte: {err_m3}")
+            with st.form(key="form_reporte_historico_matriz"):
+                materia_seleccionada = st.selectbox(
+                    "📚 Selecciona la Materia:",
+                    options=lista_materias
+                )
+
+                col_fecha_ini, col_fecha_fin = st.columns(2)
+                with col_fecha_ini:
+                    fecha_inicio = st.date_input(
+                        "📅 Fecha de Inicio:",
+                        value=datetime.now() - timedelta(days=14),
+                        format="DD/MM/YYYY"
+                    )
+
+                with col_fecha_fin:
+                    fecha_fin = st.date_input(
+                        "📅 Fecha Final:",
+                        value=datetime.now(),
+                        format="DD/MM/YYYY"
+                    )
+
+                btn_generar = st.form_submit_button("🚀 Generar Reporte Matriz", type="primary", use_container_width=True)
+
+            if btn_generar:
+                if fecha_inicio > fecha_fin:
+                    st.error("⚠️ La fecha de inicio no puede ser mayor a la fecha final.")
+                else:
+                    with st.spinner("Consultando registros de asistencia..."):
+                        try:
+                            df_matriz = generar_matriz_reporte(
+                                engine, 
+                                grupo_seleccionado, 
+                                materia_seleccionada,
+                                fecha_inicio, 
+                                fecha_fin
+                            )
+
+                            if df_matriz.empty:
+                                st.warning(f"No hay alumnos registrados para el grupo **{grupo_seleccionado}**.")
+                            else:
+                                st.subheader(f"Materia: {materia_seleccionada} — Grupo: {grupo_seleccionado}")
+                                
+                                st.data_editor(
+                                    df_matriz,
+                                    disabled=True,
+                                    use_container_width=True,
+                                    hide_index=True
+                                )
+
+                                csv_data = df_matriz.to_csv(index=False, encoding='utf-8-sig')
+                                st.download_button(
+                                    label="📥 Descargar Reporte en CSV",
+                                    data=csv_data,
+                                    file_name=f"Faltas_{grupo_seleccionado}_{materia_seleccionada}_{fecha_inicio.strftime('%Y%m%d')}_a_{fecha_fin.strftime('%Y%m%d')}.csv",
+                                    mime="text/csv"
+                                )
+
+                        except Exception as e:
+                            st.error(f"⚠️ Error al generar el reporte: {e}")
